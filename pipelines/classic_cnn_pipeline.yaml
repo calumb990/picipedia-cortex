@@ -3,10 +3,42 @@
 components:
   comp-preprocess:
     executorLabel: exec-preprocess
+    outputDefinitions:
+      artifacts:
+        test_loader:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        train_loader:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
   comp-test:
     executorLabel: exec-test
+    inputDefinitions:
+      artifacts:
+        model_state:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+        test_loader:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
   comp-train:
     executorLabel: exec-train
+    inputDefinitions:
+      artifacts:
+        train_loader:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        model_state:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
 deploymentSpec:
   executors:
     exec-preprocess:
@@ -35,7 +67,17 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef preprocess():\n    pass\n\n"
+          \ *\n\ndef preprocess(train_loader: Output[Dataset], test_loader: Output[Dataset]):\n\
+          \    transform = transforms.Compose([\n        transforms.ToTensor(),\n\
+          \        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))\n    ])\n\
+          \n    # Load the CIFAR10 dataset temporarily until the AWS S3 data lake\
+          \ has been set up\n    train_set = datasets.CIFAR10(root='./data', train=True,\
+          \ download=True, transform=transform)\n    train_loader = data.DataLoader(train_set,\
+          \ batch_size=4, shuffle=True, num_workers=2)\n    test_set = torchvision.datasets.CIFAR10(root='./data',\
+          \ train=False, download=True, transform=transform)\n    test_loader = torch.utils.data.DataLoader(test_set,\
+          \ batch_size=4, shuffle=False, num_workers=2)\n\n    # Save datasets to\
+          \ KFP output paths\n    torch.save(train_loader, train_loader.path)\n  \
+          \  torch.save(test_loader, test_loader.path)\n\n"
         image: python:3.9
     exec-test:
       container:
@@ -63,7 +105,18 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef test():\n    pass\n\n"
+          \ *\n\ndef test(test_loader: Input[Dataset], model_state: Input[Model]):\n\
+          \    test_loader: DataLoader  = torch.load(test_loader.path)\n\n    cnn\
+          \ = CNN()\n    cnn.load_state_dict(torch.load(model_state.path, weights_only=True))\n\
+          \n    total = 0\n    correct = 0\n\n    with torch.no_grad():\n        for\
+          \ data in test_loader:\n            images: torch.Tensor\n            labels:\
+          \ torch.Tensor\n            images, labels = data\n\n            outputs:\
+          \ torch.Tensor\n            outputs = cnn(images)\n\n            _, predicted\
+          \ = torch.max(outputs, 1)\n            total += labels.size(0)\n       \
+          \     correct += (predicted == labels).sum().item()\n\n    # Output the\
+          \ ratio of correct predictions to total predictions giving the accurracy\n\
+          \    print(f'Accuracy of the network on the 10000 test images: {100 * correct\
+          \ // total} %')\n\n"
         image: python:3.9
     exec-train:
       container:
@@ -91,7 +144,19 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef train():\n    pass\n\n"
+          \ *\n\ndef train(train_loader: Input[Dataset], model_state: Output[Model]):\n\
+          \    train_loader: data.DataLoader = torch.load(train_loader.path)\n\n \
+          \   cnn = CNN()\n    criterion = nn.CrossEntropyLoss()\n    optimizer =\
+          \ optim.Adam(cnn.parameters(), lr=0.001)\n\n    for epoch in range(10):\n\
+          \n        running_loss = 0.0\n        for i, data in enumerate(train_loader):\n\
+          \            inputs: torch.Tensor\n            labels: torch.Tensor\n  \
+          \          inputs, labels = data\n\n            optimizer.zero_grad()\n\
+          \            outputs = cnn(inputs)\n            loss = criterion(outputs,\
+          \ labels)\n            loss.backward()\n            optimizer.step()\n\n\
+          \            running_loss += loss.item()\n            if i % 2000 == 1999:\n\
+          \                print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss /\
+          \ 2000:.3f}')\n                running_loss = 0.0\n\n    torch.save(cnn.state_dict(),\
+          \ model_state.path)\n\n"
         image: python:3.9
 pipelineInfo:
   name: classic-cnn-pipeline
@@ -110,6 +175,19 @@ root:
           enableCache: true
         componentRef:
           name: comp-test
+        dependentTasks:
+        - preprocess
+        - train
+        inputs:
+          artifacts:
+            model_state:
+              taskOutputArtifact:
+                outputArtifactKey: model_state
+                producerTask: train
+            test_loader:
+              taskOutputArtifact:
+                outputArtifactKey: test_loader
+                producerTask: preprocess
         taskInfo:
           name: test
       train:
@@ -117,6 +195,14 @@ root:
           enableCache: true
         componentRef:
           name: comp-train
+        dependentTasks:
+        - preprocess
+        inputs:
+          artifacts:
+            train_loader:
+              taskOutputArtifact:
+                outputArtifactKey: train_loader
+                producerTask: preprocess
         taskInfo:
           name: train
 schemaVersion: 2.1.0
