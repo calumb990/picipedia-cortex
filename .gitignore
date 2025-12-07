@@ -1,5 +1,9 @@
 # IDE
 .idea
 
+# Poetry
+.poetry
+dist
+
 # Python
 **/__pycache__

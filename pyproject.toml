@@ -1,18 +1,30 @@
+[build-system]
+requires = ["poetry-core>=1.8.0"]
+build-backend = "poetry.core.masonry.api"
+
 [project]
 name = "picipedia-cortex"
 version = "0.0.0"
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires-python = "3.14.0"
 
 [tool.poetry]
-package-mode = false
+packages = [{ include = "models" }]
 
-[tool.poetry.dependencies]
-torchvision = "~0.24.1"
-python = "~3.14.0"
-pandas = "~2.3.3"
-numpy = "~2.3.4"
-torch = "~2.9.1"
-kfp = "~2.14.6"
+[dependency-groups]
+dev = [
+    "torchvision~=0.24.1",
+    "pandas~=2.3.3",
+    "numpy~=2.3.4",
+    "torch~=2.9.1",
+    "kfp~=2.14.6" 
+]
+kcomp = [
+    "torchvision~=0.24.1",
+    "torch~=2.9.1",
+]
+
+[tool.poetry.group.dev]
+optional = true
+
+[tool.poetry.group.kcomp]
+optional = true
