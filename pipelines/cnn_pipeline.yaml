@@ -5,11 +5,11 @@ components:
     executorLabel: exec-preprocess
     outputDefinitions:
       artifacts:
-        test_loader:
+        test_loader_output:
           artifactType:
             schemaTitle: system.Dataset
             schemaVersion: 0.0.1
-        train_loader:
+        train_loader_output:
           artifactType:
             schemaTitle: system.Dataset
             schemaVersion: 0.0.1
@@ -17,11 +17,11 @@ components:
     executorLabel: exec-test
     inputDefinitions:
       artifacts:
-        model_state:
+        model_state_input:
           artifactType:
             schemaTitle: system.Model
             schemaVersion: 0.0.1
-        test_loader:
+        test_loader_input:
           artifactType:
             schemaTitle: system.Dataset
             schemaVersion: 0.0.1
@@ -29,13 +29,13 @@ components:
     executorLabel: exec-train
     inputDefinitions:
       artifacts:
-        train_loader:
+        train_loader_input:
           artifactType:
             schemaTitle: system.Dataset
             schemaVersion: 0.0.1
     outputDefinitions:
       artifacts:
-        model_state:
+        model_state_output:
           artifactType:
             schemaTitle: system.Model
             schemaVersion: 0.0.1
@@ -53,9 +53,10 @@ deploymentSpec:
         - -c
         - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
           \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
-          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.6'\
-          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
-          $0\" \"$@\"\n"
+          \ python3 -m pip install --quiet --no-warn-script-location 'torchvision'\
+          \ 'torch==2.9.1'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.14.6' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
         - sh
         - -ec
         - 'program_path=$(mktemp -d)
@@ -67,18 +68,20 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef preprocess(train_loader: Output[Dataset], test_loader: Output[Dataset]):\n\
-          \    transform = transforms.Compose([\n        transforms.ToTensor(),\n\
-          \        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))\n    ])\n\
-          \n    # Load the CIFAR10 dataset temporarily until the AWS S3 data lake\
-          \ has been set up\n    train_set = datasets.CIFAR10(root='./data', train=True,\
-          \ download=True, transform=transform)\n    train_loader = data.DataLoader(train_set,\
+          \ *\n\ndef preprocess(train_loader_output: Output[Dataset], test_loader_output:\
+          \ Output[Dataset]):\n\n    import torch\n    import torchvision\n    import\
+          \ torch.utils.data as data\n    import torchvision.datasets as datasets\n\
+          \    import torchvision.transforms as transforms\n\n    transform = transforms.Compose([\n\
+          \        transforms.ToTensor(),\n        transforms.Normalize((0.5, 0.5,\
+          \ 0.5), (0.5, 0.5, 0.5))\n    ])\n\n    # Load the CIFAR10 dataset temporarily\
+          \ until the AWS S3 data lake has been set up\n    train_set = datasets.CIFAR10(root='./data',\
+          \ train=True, download=True, transform=transform)\n    train_loader = data.DataLoader(train_set,\
           \ batch_size=4, shuffle=True, num_workers=2)\n    test_set = torchvision.datasets.CIFAR10(root='./data',\
           \ train=False, download=True, transform=transform)\n    test_loader = torch.utils.data.DataLoader(test_set,\
           \ batch_size=4, shuffle=False, num_workers=2)\n\n    # Save datasets to\
-          \ KFP output paths\n    torch.save(train_loader, train_loader.path)\n  \
-          \  torch.save(test_loader, test_loader.path)\n\n"
-        image: python:3.9
+          \ KFP output paths\n    torch.save(train_loader, train_loader_output.path)\n\
+          \    torch.save(test_loader, test_loader_output.path)\n\n"
+        image: python:3.14.0
     exec-test:
       container:
         args:
@@ -91,7 +94,8 @@ deploymentSpec:
         - -c
         - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
           \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
-          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.6'\
+          \ python3 -m pip install --quiet --no-warn-script-location 'torch==2.9.1'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.6'\
           \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
           $0\" \"$@\"\n"
         - sh
@@ -105,19 +109,19 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef test(test_loader: Input[Dataset], model_state: Input[Model]):\n\
-          \    test_loader: DataLoader  = torch.load(test_loader.path)\n\n    cnn\
-          \ = CNN()\n    cnn.load_state_dict(torch.load(model_state.path, weights_only=True))\n\
-          \n    total = 0\n    correct = 0\n\n    with torch.no_grad():\n        for\
-          \ data in test_loader:\n            images: torch.Tensor\n            labels:\
-          \ torch.Tensor\n            images, labels = data\n\n            outputs:\
-          \ torch.Tensor\n            outputs = cnn(images)\n\n            _, predicted\
-          \ = torch.max(outputs, 1)\n            total += labels.size(0)\n       \
-          \     correct += (predicted == labels).sum().item()\n\n    # Output the\
-          \ ratio of correct predictions to total predictions giving the accurracy\n\
-          \    print(f'Accuracy of the network on the 10000 test images: {100 * correct\
-          \ // total} %')\n\n"
-        image: python:3.9
+          \ *\n\ndef test(test_loader_input: Input[Dataset], model_state_input: Input[Model]):\n\
+          \    test_loader: DataLoader  = torch.load(test_loader_input.path)\n\n \
+          \   cnn = CNN()\n    cnn.load_state_dict(torch.load(model_state_input.path,\
+          \ weights_only=True))\n\n    total = 0\n    correct = 0\n\n    with torch.no_grad():\n\
+          \        for data in test_loader:\n            images: torch.Tensor\n  \
+          \          labels: torch.Tensor\n            images, labels = data\n\n \
+          \           outputs: torch.Tensor\n            outputs = cnn(images)\n\n\
+          \            _, predicted = torch.max(outputs, 1)\n            total +=\
+          \ labels.size(0)\n            correct += (predicted == labels).sum().item()\n\
+          \n    # Output the ratio of correct predictions to total predictions giving\
+          \ the accurracy\n    print(f'Accuracy of the network on the 10000 test images:\
+          \ {100 * correct // total} %')\n\n"
+        image: python:3.14.0
     exec-train:
       container:
         args:
@@ -130,7 +134,8 @@ deploymentSpec:
         - -c
         - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
           \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
-          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.6'\
+          \ python3 -m pip install --quiet --no-warn-script-location 'torch==2.9.1'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.6'\
           \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
           $0\" \"$@\"\n"
         - sh
@@ -144,10 +149,10 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef train(train_loader: Input[Dataset], model_state: Output[Model]):\n\
-          \    train_loader: data.DataLoader = torch.load(train_loader.path)\n\n \
-          \   cnn = CNN()\n    criterion = nn.CrossEntropyLoss()\n    optimizer =\
-          \ optim.Adam(cnn.parameters(), lr=0.001)\n\n    for epoch in range(10):\n\
+          \ *\n\ndef train(train_loader_input: Input[Dataset], model_state_output:\
+          \ Output[Model]):\n    train_loader: data.DataLoader = torch.load(train_loader_input.path)\n\
+          \n    cnn = CNN()\n    criterion = nn.CrossEntropyLoss()\n    optimizer\
+          \ = optim.Adam(cnn.parameters(), lr=0.001)\n\n    for epoch in range(10):\n\
           \n        running_loss = 0.0\n        for i, data in enumerate(train_loader):\n\
           \            inputs: torch.Tensor\n            labels: torch.Tensor\n  \
           \          inputs, labels = data\n\n            optimizer.zero_grad()\n\
@@ -156,8 +161,8 @@ deploymentSpec:
           \            running_loss += loss.item()\n            if i % 2000 == 1999:\n\
           \                print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss /\
           \ 2000:.3f}')\n                running_loss = 0.0\n\n    torch.save(cnn.state_dict(),\
-          \ model_state.path)\n\n"
-        image: python:3.9
+          \ model_state_output.path)\n\n"
+        image: python:3.14.0
 pipelineInfo:
   name: classic-cnn-pipeline
 root:
@@ -180,13 +185,13 @@ root:
         - train
         inputs:
           artifacts:
-            model_state:
+            model_state_input:
               taskOutputArtifact:
-                outputArtifactKey: model_state
+                outputArtifactKey: model_state_output
                 producerTask: train
-            test_loader:
+            test_loader_input:
               taskOutputArtifact:
-                outputArtifactKey: test_loader
+                outputArtifactKey: test_loader_output
                 producerTask: preprocess
         taskInfo:
           name: test
@@ -199,9 +204,9 @@ root:
         - preprocess
         inputs:
           artifacts:
-            train_loader:
+            train_loader_input:
               taskOutputArtifact:
-                outputArtifactKey: train_loader
+                outputArtifactKey: train_loader_output
                 producerTask: preprocess
         taskInfo:
           name: train

@@ -1,1 +1,1 @@
-from .classic_cnn_pipeline import classic_cnn_pipeline
+from .cnn_pipeline import cnn_pipeline
